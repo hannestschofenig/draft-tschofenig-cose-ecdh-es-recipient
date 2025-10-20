@@ -1,0 +1,3 @@
+# Automatically generated CODEOWNERS
+# Regenerate with `make update-codeowners`
+draft-tschofenig-cose-ecdh-es-recipient.md Hannes.Tschofenig@gmx.net housley@vigilsec.com ken.takayama.ietf@gmail.com lgl@securitytheory.com
