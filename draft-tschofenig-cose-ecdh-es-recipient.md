@@ -7,8 +7,8 @@ consensus: true
 submissiontype: IETF
 
 ipr: trust200902
-area: Security
-workgroup: COSE
+area: "Security"
+workgroup: "CBOR Object Signing and Encryption"
 keyword: Internet-Draft
 
 stand_alone: yes
