@@ -1,0 +1,410 @@
+
+
+
+
+COSE                                                       H. Tschofenig
+Internet-Draft                                                     H-BRS
+Intended status: Standards Track                              R. Housley
+Expires: 23 April 2026                                    Vigil Security
+                                                             K. Takayama
+                                                         SECOM CO., LTD.
+                                                            L. Lundblade
+                                                     Security Theory LLC
+                                                         20 October 2025
+
+
+         Strengthening COSE ECDH-ES Against Downgrading Attacks
+             draft-tschofenig-cose-ecdh-es-recipient-latest
+
+Abstract
+
+   This document updates use of the COSE Ephemeral-Static Diffie–Hellman
+   (ECDH-ES) algorithms by replacing the COSE_KDF_Context with the HPKE-
+   inspired Recipient_structure when deriving keys for COSE recipients.
+   This binds recipient-protected header parameters and the next-layer
+   algorithm into the key derivation, mitigating downgrade and
+   algorithm-substitution attacks that can arise from unauthenticated
+   recipient metadata.
+
+   The construction reuses the Recipient_structure defined for
+   COSE-HPKE, changing only the context string.  New COSE algorithm
+   identifiers are registered for interoperability.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 23 April 2026.
+
+Copyright Notice
+
+   Copyright (c) 2025 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction
+   2.  Terminology
+   3.  Overview
+   4.  ECDH-ES Recipient_structure
+   5.  Processing Rules
+     5.1.  Inputs
+     5.2.  Deriving a CEK
+     5.3.  Deriving a KEK
+     5.4.  Recipient Construction and Verification
+   6.  New COSE Algorithm Identifiers
+   7.  CDDL
+   8.  Backward Compatibility
+   9.  Security Considerations
+   10. IANA Considerations
+   11. Example
+   12. References
+     12.1.  Normative References
+     12.2.  Informative References
+   Acknowledgments
+   Authors' Addresses
+
+1.  Introduction
+
+   [RFC9052] and [RFC9053] define COSE and the use of ECDH-ES with HKDF
+   and AES Key Wrap.  The key material for content encryption (CEK) or
+   key-encryption keys (KEK) is derived via a KDF context that does not
+   cover all recipient metadata.  As discussed on the COSE mailing list
+   and in work on CMS [RFC9709], unauthenticated recipient metadata can
+   enable algorithm-substitution and downgrade attacks.
+
+   COSE-HPKE [I-D.ietf-cose-hpke] introduced a Recipient_structure that
+   is deterministically encoded and used as the HPKE info parameter to
+   bind the next-layer algorithm identifier and recipient-protected
+   headers into the key derivation.  This document specifies an
+   analogous change for COSE ECDH-ES: when an ECDH-ES algorithm is used
+   in a COSE_recipient, the COSE_KDF_Context is replaced with a
+   Recipient_structure and the derived key is computed accordingly.
+
+   This specification is intended for use cases including firmware
+   encryption, see [I-D.ietf-suit-firmware-encryption], where ECDH-ES is
+   used.
+
+2.  Terminology
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in
+   BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
+
+   CBOR and COSE terminology are as in [RFC9052] and [RFC9053].
+
+3.  Overview
+
+   This document defines the ECDH-ES Recipient_structure, a
+   deterministic CBOR structure modeled after the HPKE
+   Recipient_structure.  Implementations use it in place of
+   COSE_KDF_Context for ECDH-ES recipients.  The construction provides
+   integrity for recipient-protected headers and cryptographically binds
+   the next-layer algorithm to the derived key.  It is applicable both
+   when ECDH-ES derives a CEK directly (ECDH-ES+HKDF-_) and when ECDH-ES
+   derives a KEK for AES-KW (ECDH-ES+A_KW).
+
+   To avoid interoperability failures with existing deployments, this
+   document registers new COSE algorithm identifiers that signal use of
+   this construction.
+
+4.  ECDH-ES Recipient_structure
+
+   The structure is identical to the one in COSE-HPKE except for the
+   context string.  The deterministic CBOR encoding defined in [RFC8949]
+   Section 4.2.1 MUST be used.
+
+   ECDH-ES-Recipient-structure = [
+     context: "ECDH-ES Recipient",
+     next_layer_alg: int / tstr,
+     recipient_protected_header: empty_or_serialize_map,
+     recipient_extra_info: bstr
+   ]
+
+   *  context contains the fixed text string "ECDH-ES Recipient" to
+      distinguish this structure from the COSE-HPKE-defined
+      recipient_structure
+   *  next_layer_alg is the algorithm identifier for the next lower COSE
+      layer (the content-encryption algorithm used with the CEK or the
+      key-wrap algorithm).  This value MUST equal the alg parameter in
+      that lower layer.
+   *  recipient_protected_header is the deterministic CBOR encoding of
+      the protected header parameters of the COSE_recipient.
+   *  recipient_extra_info allows applications to include additional
+      context into key derivation (e.g., identifiers).  If unused, set
+      to the zero-length byte string.
+
+5.  Processing Rules
+
+   When an ECDH-ES algorithm defined in this document is used in a
+   COSE_recipient, the following rules apply.
+
+5.1.  Inputs
+
+   *  Let Z be the ECDH shared secret computed per [RFC9053].
+   *  Let salt be the value of the COSE header parameter salt (if
+      present) or absent otherwise, as defined by [RFC9053].
+   *  Let RS be the deterministic CBOR encoding of the ECDH-ES
+      Recipient_structure defined in Section 4.
+
+5.2.  Deriving a CEK
+
+   Use HKDF (with the hash function indicated by the algorithm) as
+   follows:
+
+   *  IKM = Z.
+   *  salt = the salt header parameter value if present; otherwise
+      absent (per HKDF).
+   *  info = RS.
+   *  L = length of the CEK required by the next-layer AEAD algorithm.
+
+   Output is the CEK.
+
+   This replaces the use of COSE_KDF_Context.  The derived key will
+   differ from [RFC9053] for the same inputs.
+
+5.3.  Deriving a KEK
+
+   For algorithms that wrap a randomly generated CEK using AES-KW,
+   derive the KEK via HKDF as in Section 5.2 but with L equal to the
+   AES-KW key length (128, 192, or 256 bits).  Use the resulting key as
+   the KEK for AES-KW.
+
+5.4.  Recipient Construction and Verification
+
+   *  The alg parameter for the COSE_recipient MUST be one of the
+      algorithms defined in Section 6.
+   *  If the alg parameter is present at the content-encryption layer
+      (layer 0), it MUST be the algorithm named by next_layer_alg.
+   *  The value of recipient_protected_header in RS MUST exactly match
+      the recipient’s protected header in the message.
+   *  Applications SHOULD include a kid identifying the static recipient
+      public key in the protected headers of the recipient; this ensures
+      it is covered by RS.  Parameters other than the kid may be used to
+      identify the static recipient public key.
+
+6.  New COSE Algorithm Identifiers
+
+   This document registers new COSE algorithms that mirror the existing
+   ECDH-ES algorithms but signal the use of the Recipient_structure in
+   key derivation.  The semantics and key types are otherwise unchanged
+   from [RFC9053].
+
+   +=========+=====+===================+====+=======+============+===========+
+   |Name     |Value|Description        |Key |Hash   |Capabilities|Recommended|
+   |         |     |                   |Type|       |            |           |
+   +=========+=====+===================+====+=======+============+===========+
+   |ECDH-ES-R|TBD1 |ECDH-ES with       |EC2 |SHA-256|derive      |Yes        |
+   |S+HKDF-  |     |HKDF-SHA-256 using |/   |       |            |           |
+   |256      |     |Recipient_structure|OKP |       |            |           |
+   +---------+-----+-------------------+----+-------+------------+-----------+
+   |ECDH-ES-R|TBD2 |ECDH-ES with       |EC2 |SHA-512|derive      |No         |
+   |S+HKDF-  |     |HKDF-SHA-512 using |/   |       |            |           |
+   |512      |     |Recipient_structure|OKP |       |            |           |
+   +---------+-----+-------------------+----+-------+------------+-----------+
+   |ECDH-ES- |TBD3 |ECDH-ES deriving   |EC2 |SHA-256|derive      |Yes        |
+   |RS+A128KW|     |128-bit KEK via    |/   |       |            |           |
+   |         |     |HKDF-SHA-256 and   |OKP |       |            |           |
+   |         |     |using              |    |       |            |           |
+   |         |     |Recipient_structure|    |       |            |           |
+   +---------+-----+-------------------+----+-------+------------+-----------+
+   |ECDH-ES- |TBD4 |ECDH-ES deriving   |EC2 |SHA-256|derive      |No         |
+   |RS+A192KW|     |192-bit KEK via    |/   |       |            |           |
+   |         |     |HKDF-SHA-256 and   |OKP |       |            |           |
+   |         |     |using              |    |       |            |           |
+   |         |     |Recipient_structure|    |       |            |           |
+   +---------+-----+-------------------+----+-------+------------+-----------+
+   |ECDH-ES- |TBD5 |ECDH-ES deriving   |EC2 |SHA-256|derive      |Yes        |
+   |RS+A256KW|     |256-bit KEK via    |/   |       |            |           |
+   |         |     |HKDF-SHA-256 and   |OKP |       |            |           |
+   |         |     |using              |    |       |            |           |
+   |         |     |Recipient_structure|    |       |            |           |
+   +---------+-----+-------------------+----+-------+------------+-----------+
+
+                                  Table 1
+
+   Rationale:* Aligns with existing COSE registrations and keeps HKDF
+   hash choices consistent with [RFC9053].  If a future need arises,
+   variants using HKDF-SHA-512 for AES-KW MAY be registered.
+
+7.  CDDL
+
+   The following CDDL augments [RFC9052] and [RFC9053].
+
+   empty_or_serialize_map = bstr .cbor map / bstr .size 0
+
+   ECDH-ES-Recipient-structure = [
+     context: "ECDH-ES Recipient",
+     next_layer_alg: int / tstr,
+     recipient_protected_header: empty_or_serialize_map,
+     recipient_extra_info: bstr
+   ]
+
+8.  Backward Compatibility
+
+   The construction in this document intentionally changes the KDF info
+   input compared to [RFC9053], and therefore produces different keys.
+   Messages created using the algorithms in Section 6 are not
+   interoperable with messages produced using the legacy ECDH-ES
+   algorithms.  This is by design and prevents silent downgrade.
+
+   Implementations that need to accept legacy messages MAY support both
+   sets of algorithms.  Senders SHOULD prefer the new -RS algorithms
+   when a recipient advertises support.
+
+9.  Security Considerations
+
+   This specification provides two main security benefits:
+
+   *  Header Binding: By incorporating the deterministically encoded
+      recipient_protected_header into the HKDF info, protected header
+      parameters (including kid and any algorithm signals) are
+      cryptographically bound to the derived key.  An attacker cannot
+      flip recipient-protected parameters without causing decryption
+      failure.
+   *  Algorithm Binding: Binding next_layer_alg prevents
+      algorithm-substitution and downgrade of the content-encryption or
+      key-wrap algorithm.  This addresses attack classes discussed in
+      [RFC9709] and analogous to LAMPS findings applied to other
+      formats.
+
+   Applications SHOULD continue to place all security-critical recipient
+   parameters into the protected header.  Applications SHOULD NOT place
+   large or bulk external data into recipient_extra_info; use
+   external_aad at layer 0 if such data needs integrity protection.
+
+10.  IANA Considerations
+
+   IANA is requested to register the algorithms in Section 6 in the
+   "COSE Algorithms" registry under the following template:
+
+   *  Name: as in Section 6
+   *  Value: TBD (to be assigned by IANA)
+   *  Description: as in Section 6
+   *  Change Controller: IESG
+   *  Reference: This document
+   *  Recommended: as in Section 6
+   *  Capabilities: [derive]
+   *  Key Type: EC2, OKP
+
+   No new header parameters are defined by this document.
+
+11.  Example
+
+   This section provides an abbreviated example for ECDH-ES-RS+HKDF-256
+   protecting a single recipient.  Hex strings are illustrative.
+
+RS := [
+  "ECDH-ES Recipient",
+  1,                                     ; A128GCM at layer 0
+  << {1: -100, 4: h'11aa22bb'} >>,        ; { alg: ECDH-ES-RS+HKDF-256, kid: ... }
+  h''
+]
+
+IKM = Z
+salt = (absent)
+info = encode_deterministic(RS)
+CEK  = HKDF-Expand(HKDF-Extract(salt, IKM), info, 16)
+
+12.  References
+
+12.1.  Normative References
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/rfc/rfc2119>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/rfc/rfc8174>.
+
+   [RFC8949]  Bormann, C. and P. Hoffman, "Concise Binary Object
+              Representation (CBOR)", STD 94, RFC 8949,
+              DOI 10.17487/RFC8949, December 2020,
+              <https://www.rfc-editor.org/rfc/rfc8949>.
+
+   [RFC9052]  Schaad, J., "CBOR Object Signing and Encryption (COSE):
+              Structures and Process", STD 96, RFC 9052,
+              DOI 10.17487/RFC9052, August 2022,
+              <https://www.rfc-editor.org/rfc/rfc9052>.
+
+   [RFC9053]  Schaad, J., "CBOR Object Signing and Encryption (COSE):
+              Initial Algorithms", RFC 9053, DOI 10.17487/RFC9053,
+              August 2022, <https://www.rfc-editor.org/rfc/rfc9053>.
+
+12.2.  Informative References
+
+   [I-D.ietf-cose-hpke]
+              Tschofenig, H., Steele, O., Daisuke, A., and L. Lundblade,
+              "Use of Hybrid Public-Key Encryption (HPKE) with CBOR
+              Object Signing and Encryption (COSE)", Work in Progress,
+              Internet-Draft, draft-ietf-cose-hpke-18, 19 October 2025,
+              <https://datatracker.ietf.org/doc/html/draft-ietf-cose-
+              hpke-18>.
+
+   [I-D.ietf-suit-firmware-encryption]
+              Tschofenig, H., Housley, R., Moran, B., Brown, D., and K.
+              Takayama, "Encrypted Payloads in SUIT Manifests", Work in
+              Progress, Internet-Draft, draft-ietf-suit-firmware-
+              encryption-25, 7 July 2025,
+              <https://datatracker.ietf.org/doc/html/draft-ietf-suit-
+              firmware-encryption-25>.
+
+   [RFC9709]  Housley, R., "Encryption Key Derivation in the
+              Cryptographic Message Syntax (CMS) Using HKDF with SHA-
+              256", RFC 9709, DOI 10.17487/RFC9709, January 2025,
+              <https://www.rfc-editor.org/rfc/rfc9709>.
+
+Acknowledgments
+
+   Thanks to Ilari Liusvaara and the COSE working group for discussions
+   and to the SUIT and TEEP working group participants for motivating
+   use cases.
+
+Authors' Addresses
+
+   Hannes Tschofenig
+   University of Applied Sciences Bonn-Rhein-Sieg
+   Germany
+   Email: Hannes.Tschofenig@gmx.net
+
+
+   Russ Housley
+   Vigil Security, LLC
+   United States
+   Email: housley@vigilsec.com
+
+
+   Ken Takayama
+   SECOM CO., LTD.
+   Japan
+   Email: ken.takayama.ietf@gmail.com
+
+
+   Laurence Lundblade
+   Security Theory LLC
+   United States
+   Email: lgl@securitytheory.com
